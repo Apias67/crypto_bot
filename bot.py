@@ -1,62 +1,72 @@
-import requests
-import time
+import os
+import json
+from websocket import WebSocketApp
 from telegram import Bot
 
-TOKEN = "8763631522:AAGbFUF-q8Bw1hDhP8B8NdjZ78Bnup57eVY"
+# ---------------- Telegram ----------------
+TOKEN = "8763631522:AAGbFUF-q8Bw1hDhP8B8NdjZ78Bnup57eVY" 
 CHAT_ID = "6702443414"
+bot = Bot(token=TOKEN)
 
-bot = Bot(token=8763631522:AAGbFUF-q8Bw1hDhP8B8NdjZ78Bnup57eVY)
+# ---------------- Konfiguracja ----------------
+SYMBOLS = ["btcusdt", "ethusdt", "bnbusdt"]  # lista coinów
+VOLUME_WINDOW = 10
+PUMP_THRESHOLD = 3
+WHALE_THRESHOLD = 5_000_000  # w USDT
 
-def get_data():
-    all_coins = []
-    for page in range(1, 5):
-        url = f"https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page={page}&price_change_percentage=24h"
-        data = requests.get(url).json()
-        all_coins.extend(data)
-    return all_coins
+# Bufory wolumenów dla każdego coina
+volume_history = {symbol: [] for symbol in SYMBOLS}
 
-def check():
-    coins = get_data()
-    alerts = []
+# Funkcja wykrywająca pumpy i whale buys
+def detect_pump_or_whale(symbol, volume, price, amount):
+    avg_volume = sum(volume_history[symbol]) / len(volume_history[symbol]) if volume_history[symbol] else 0
+    messages = []
 
-    for coin in coins:
-        price_change = coin.get("price_change_percentage_24h")
-        volume = coin.get("total_volume")
-        market_cap = coin.get("market_cap")
+    # Pump
+    if avg_volume > 0 and volume > PUMP_THRESHOLD * avg_volume:
+        messages.append(f"🚨 Pump detected! Coin: {symbol.upper()} Volume: {volume:.4f} (avg: {avg_volume:.4f})")
 
-        if not price_change or not volume or not market_cap:
-            continue
+    # Whale buy
+    if amount * price >= WHALE_THRESHOLD:
+        messages.append(f"🐋 Whale buy! Coin: {symbol.upper()} Amount: {amount:.4f} Price: {price:.2f}")
 
-        # 🔥 SMART FILTER
-        if (
-            price_change > 8 and              # rośnie
-            volume > 2_000_000 and           # realny wolumen
-            market_cap < 500_000_000         # mid/small cap
-        ):
-            alerts.append(
-                f"🚨 SMART MONEY ALERT\n"
-                f"{coin['name']} ({coin['symbol'].upper()})\n"
-                f"Price Change: {round(price_change,2)}%\n"
-                f"Volume: ${volume:,}\n"
-                f"Market Cap: ${market_cap:,}"
-            )
+    # Wyślij wszystkie wiadomości w jednej
+    if messages:
+        bot.send_message(chat_id=CHAT_ID, text="\n".join(messages))
 
-    return alerts[:10]
+# Funkcja do obsługi WebSocket
+def make_on_message(symbol):
+    def on_message(ws, message):
+        data = json.loads(message)
+        trade_volume = float(data['q'])
+        trade_price = float(data['p'])
+        volume_history[symbol].append(trade_volume)
 
-def send_alerts():
-    alerts = check()
+        if len(volume_history[symbol]) > VOLUME_WINDOW:
+            volume_history[symbol].pop(0)
 
-    if not alerts:
-        bot.send_message(chat_id=CHAT_ID, text="😴 Brak smart money (cisza)")
-    else:
-        for msg in alerts:
-            bot.send_message(chat_id=CHAT_ID, text=msg)
+        detect_pump_or_whale(symbol, trade_volume, trade_price, trade_volume)
+    return on_message
 
-while True:
-    try:
-        send_alerts()
-        print("OK - scan done")
-    except Exception as e:
-        print("ERROR:", e)
+def on_error(ws, error):
+    print("WebSocket error:", error)
 
-    time.sleep(3600)
+def on_close(ws):
+    print("WebSocket closed")
+
+def on_open(ws):
+    print("WebSocket connection opened")
+
+# ---------------- Uruchomienie WebSocket dla wielu coinów ----------------
+websockets = []
+for symbol in SYMBOLS:
+    ws_url = f"wss://stream.binance.com:9443/ws/{symbol}@trade"
+    ws = WebSocketApp(ws_url, on_message=make_on_message(symbol), on_error=on_error, on_close=on_close)
+    ws.on_open = on_open
+    websockets.append(ws)
+
+# Uruchom każdy WebSocket w osobnym wątku
+import threading
+for ws in websockets:
+    t = threading.Thread(target=ws.run_forever)
+    t.start()
