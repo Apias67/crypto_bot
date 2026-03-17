@@ -1,13 +1,20 @@
 import json
 import time
 import threading
+import requests
 from websocket import WebSocketApp
-from telegram import Bot
 
 # ---------------- Telegram ----------------
 TOKEN = "8763631522:AAGbFUF-q8Bw1hDhP8B8NdjZ78Bnup57eVY"
 CHAT_ID = "6702443414"
-bot = Bot(token=TOKEN)
+
+def send_telegram(message):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    data = {"chat_id": CHAT_ID, "text": message}
+    try:
+        requests.post(url, data=data)
+    except Exception as e:
+        print("Błąd wysyłania Telegram:", e)
 
 # ---------------- Konfiguracja ----------------
 SYMBOLS = [
@@ -31,24 +38,26 @@ SYMBOLS = [
     "mxusdt", "gasusdt", "stgusdt", "ampusdt", "cowusdt", "tfuelusdt", "abusdt", "sfpusdt",
     "hntusdt", "fluidusdt", "vsnusdt", "fttusdt", "cheemusdt", "telusdt", "wemixusdt", "yzyusdt"
 ]
+
 VOLUME_WINDOW = 10
 PUMP_THRESHOLD = 3
 WHALE_THRESHOLD = 5_000_000
-ALERT_INTERVAL = 5  # sekundy między alertami
+ALERT_INTERVAL = 300  # 5 minut = 300 sekund
 
 # ---------------- Bufory danych ----------------
 volume_history = {symbol: [] for symbol in SYMBOLS}
-alert_buffer = []
+pump_alerts = {}
+whale_alerts = {}
 
 # ---------------- Funkcja wykrywająca pumpty i whale buys ----------------
 def detect_pump_or_whale(symbol, volume, price, amount):
     avg_volume = sum(volume_history[symbol])/len(volume_history[symbol]) if volume_history[symbol] else 0
 
     if avg_volume > 0 and volume > PUMP_THRESHOLD * avg_volume:
-        alert_buffer.append(f"🚨 Pump detected! Coin: {symbol.upper()} Volume: {volume:.4f} (avg: {avg_volume:.4f})")
+        pump_alerts[symbol] = volume
 
     if amount * price >= WHALE_THRESHOLD:
-        alert_buffer.append(f"🐋 Whale buy! Coin: {symbol.upper()} Amount: {amount:.4f} Price: {price:.2f}")
+        whale_alerts[symbol] = max(whale_alerts.get(symbol, 0), amount*price)
 
 # ---------------- Funkcja WebSocket ----------------
 def make_on_message(symbol):
@@ -73,13 +82,29 @@ def on_close(ws):
 def on_open(ws):
     print("WebSocket connection opened")
 
-# ---------------- Funkcja wysyłająca zbiorcze alerty ----------------
+# ---------------- Funkcja wysyłająca ranking alertów co 5 minut ----------------
 def alert_sender():
     while True:
         time.sleep(ALERT_INTERVAL)
-        if alert_buffer:
-            bot.send_message(chat_id=CHAT_ID, text="\n".join(alert_buffer))
-            alert_buffer.clear()
+        messages = []
+
+        if pump_alerts:
+            top_pumps = sorted(pump_alerts.items(), key=lambda x: x[1], reverse=True)[:10]
+            messages.append("🔥 Top Pumps (5 min):")
+            for sym, vol in top_pumps:
+                messages.append(f"{sym.upper()}: Volume {vol:.4f}")
+
+        if whale_alerts:
+            top_whales = sorted(whale_alerts.items(), key=lambda x: x[1], reverse=True)[:10]
+            messages.append("\n🐋 Top Whale Buys (5 min):")
+            for sym, val in top_whales:
+                messages.append(f"{sym.upper()}: ${val:.2f}")
+
+        if messages:
+            send_telegram("\n".join(messages))
+
+        pump_alerts.clear()
+        whale_alerts.clear()
 
 # ---------------- Uruchomienie WebSocket ----------------
 websockets = []
@@ -92,10 +117,10 @@ for symbol in SYMBOLS:
     ws.on_open = on_open
     websockets.append(ws)
 
-# ---------------- Wątek alert_sender ----------------
+# ---------------- Uruchomienie wątku alert_sender ----------------
 threading.Thread(target=alert_sender, daemon=True).start()
 
-# ---------------- Uruchomienie każdego WebSocket w osobnym wątku ----------------
+# ---------------- Uruchomienie WebSocket w osobnych wątkach ----------------
 for ws in websockets:
     t = threading.Thread(target=ws.run_forever, daemon=True)
     t.start()
