@@ -3,6 +3,7 @@ import time
 import threading
 import requests
 from websocket import WebSocketApp
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # ---------------- Telegram ----------------
 TOKEN = "8763631522:AAGbFUF-q8Bw1hDhP8B8NdjZ78Bnup57eVY"
@@ -15,6 +16,20 @@ def send_telegram(message):
         requests.post(url, data=data)
     except Exception as e:
         print("Błąd wysyłania Telegram:", e)
+
+# ---------------- Dummy HTTP Server (Render wymaga portu) ----------------
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running")
+
+def run_server():
+    server_address = ('', 10000)  # Render wymaga portu
+    httpd = HTTPServer(server_address, DummyHandler)
+    httpd.serve_forever()
+
+threading.Thread(target=run_server, daemon=True).start()
 
 # ---------------- Konfiguracja ----------------
 SYMBOLS = [
@@ -42,20 +57,34 @@ SYMBOLS = [
 VOLUME_WINDOW = 10
 PUMP_THRESHOLD = 3
 WHALE_THRESHOLD = 5_000_000
-ALERT_INTERVAL = 300  # 5 minut = 300 sekund
+ALERT_INTERVAL = 300  # 5 minut
 
 # ---------------- Bufory danych ----------------
 volume_history = {symbol: [] for symbol in SYMBOLS}
+price_history = {symbol: [] for symbol in SYMBOLS}
 pump_alerts = {}
 whale_alerts = {}
+GROUPS = [20, 30, 40, 50, 80, 100]
 
 # ---------------- Funkcja wykrywająca pumpty i whale buys ----------------
 def detect_pump_or_whale(symbol, volume, price, amount):
-    avg_volume = sum(volume_history[symbol])/len(volume_history[symbol]) if volume_history[symbol] else 0
+    volume_history[symbol].append(volume)
+    price_history[symbol].append(price)
+    if len(volume_history[symbol]) > VOLUME_WINDOW:
+        volume_history[symbol].pop(0)
+        price_history[symbol].pop(0)
 
+    # Pump (wolumen + procentowy wzrost)
+    avg_volume = sum(volume_history[symbol])/len(volume_history[symbol])
     if avg_volume > 0 and volume > PUMP_THRESHOLD * avg_volume:
-        pump_alerts[symbol] = volume
+        old_price = price_history[symbol][0]
+        price_change_pct = ((price - old_price) / old_price) * 100
+        for g in GROUPS:
+            if price_change_pct >= g:
+                pump_alerts.setdefault(g, []).append(f"{symbol.upper()} +{price_change_pct:.1f}%")
+                break
 
+    # Whale buy
     if amount * price >= WHALE_THRESHOLD:
         whale_alerts[symbol] = max(whale_alerts.get(symbol, 0), amount*price)
 
@@ -65,11 +94,6 @@ def make_on_message(symbol):
         data = json.loads(message)
         trade_volume = float(data['q'])
         trade_price = float(data['p'])
-
-        volume_history[symbol].append(trade_volume)
-        if len(volume_history[symbol]) > VOLUME_WINDOW:
-            volume_history[symbol].pop(0)
-
         detect_pump_or_whale(symbol, trade_volume, trade_price, trade_volume)
     return on_message
 
@@ -82,21 +106,20 @@ def on_close(ws):
 def on_open(ws):
     print("WebSocket connection opened")
 
-# ---------------- Funkcja wysyłająca ranking alertów co 5 minut ----------------
+# ---------------- Funkcja wysyłająca alerty co 5 minut ----------------
 def alert_sender():
     while True:
         time.sleep(ALERT_INTERVAL)
         messages = []
 
         if pump_alerts:
-            top_pumps = sorted(pump_alerts.items(), key=lambda x: x[1], reverse=True)[:10]
-            messages.append("🔥 Top Pumps (5 min):")
-            for sym, vol in top_pumps:
-                messages.append(f"{sym.upper()}: Volume {vol:.4f}")
+            messages.append("🔥 Pumps by % change (5 min):")
+            for g in sorted(pump_alerts.keys()):
+                messages.append(f"{g}%+ : {', '.join(pump_alerts[g])}")
 
         if whale_alerts:
-            top_whales = sorted(whale_alerts.items(), key=lambda x: x[1], reverse=True)[:10]
             messages.append("\n🐋 Top Whale Buys (5 min):")
+            top_whales = sorted(whale_alerts.items(), key=lambda x: x[1], reverse=True)[:10]
             for sym, val in top_whales:
                 messages.append(f"{sym.upper()}: ${val:.2f}")
 
@@ -117,10 +140,8 @@ for symbol in SYMBOLS:
     ws.on_open = on_open
     websockets.append(ws)
 
-# ---------------- Uruchomienie wątku alert_sender ----------------
 threading.Thread(target=alert_sender, daemon=True).start()
 
-# ---------------- Uruchomienie WebSocket w osobnych wątkach ----------------
 for ws in websockets:
     t = threading.Thread(target=ws.run_forever, daemon=True)
     t.start()
