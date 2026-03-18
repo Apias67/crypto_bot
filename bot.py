@@ -7,6 +7,7 @@ import pandas as pd
 from websocket import WebSocketApp
 from telegram import Bot
 import requests
+import base64   # <- dodaj to, jeśli używasz Base64
 
 # =========================
 # CONFIG
