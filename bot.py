@@ -48,7 +48,7 @@ except Exception as e:
 # =========================
 # CONFIG
 # =========================
-TELEGRAM_TOKEN = base64.b64decode(os.environ.get(8763631522:AAGbFUF-q8Bw1hDhP8B8NdjZ78Bnup57eVY)).decode()
+TELEGRAM_TOKEN = base64.b64decode(os.environ.get("8763631522:AAGbFUF-q8Bw1hDhP8B8NdjZ78Bnup57eVY")).decode()
 TELEGRAM_CHAT_ID = os.environ.get(6702443414)
 bot = Bot(token=TELEGRAM_TOKEN)
 
