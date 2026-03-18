@@ -9,11 +9,47 @@ from telegram import Bot
 import requests
 import base64   # <- dodaj to, jeśli używasz Base64
 
+# ==========================================================
+# Próba pobrania tokena z Environment Variables
+# ==========================================================
+raw_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+if raw_token is None:
+    raise ValueError("❌ Brak zmiennej środowiskowej TELEGRAM_BOT_TOKEN!")
+
+# ==========================================================
+# Sprawdzenie, czy token wygląda jak Base64 (tylko litery + liczby + =)
+# ==========================================================
+try:
+    # próbujemy zdekodować Base64
+    decoded_token = base64.b64decode(raw_token.strip()).decode()
+    # jeśli się udało i wygląda jak token Telegrama (id:xxxxxx) → używamy Base64
+    if ":" in decoded_token:
+        TELEGRAM_TOKEN = decoded_token
+    else:
+        TELEGRAM_TOKEN = raw_token  # nie jest Base64, traktujemy jako normalny token
+except Exception:
+    TELEGRAM_TOKEN = raw_token  # nie jest Base64, traktujemy jako normalny token
+
+# ==========================================================
+# Tworzymy obiekt bota
+# ==========================================================
+bot = Bot(token=TELEGRAM_TOKEN)
+
+# ==========================================================
+# Testowa wiadomość
+# ==========================================================
+try:
+    bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="✅ Bot LEVEL 5.8 wystartował poprawnie!")
+    print("✅ Testowa wiadomość wysłana!")
+except Exception as e:
+    print("❌ Błąd wysyłki wiadomości:", e)
 # =========================
 # CONFIG
 # =========================
-TELEGRAM_TOKEN = base64.b64decode(os.environ.get("TELEGRAM_BOT_TOKEN")).decode()
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+TELEGRAM_TOKEN = base64.b64decode(os.environ.get(8763631522:AAGbFUF-q8Bw1hDhP8B8NdjZ78Bnup57eVY)).decode()
+TELEGRAM_CHAT_ID = os.environ.get(6702443414)
 bot = Bot(token=TELEGRAM_TOKEN)
 
 # Bitget Futures API - TODO: Uzupełnij swoimi danymi
