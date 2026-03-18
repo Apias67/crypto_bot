@@ -52,6 +52,20 @@ TELEGRAM_TOKEN = "8763631522:AAGbFUF-q8Bw1hDhP8B8NdjZ78Bnup57eVY"
 TELEGRAM_CHAT_ID = 6702443414
 bot = Bot(token=TELEGRAM_TOKEN)
 
+# Testowa wiadomość
+try:
+    bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="✅ Bot LEVEL 5.8 wystartował poprawnie!")
+    print("✅ Testowa wiadomość wysłana!")
+except Exception as e:
+    print("❌ Błąd wysyłki wiadomości:", e)
+
+# ================================
+# Pętla, aby bot pozostał online
+# ================================
+print("🔥 Bot działa, oczekiwanie na alerty... 🔥")
+while True:
+    time.sleep(60)  # odczekuje 60 sekund i "utrzymuje bota przy życiu"
+
 # Bitget Futures API - TODO: Uzupełnij swoimi danymi
 BITGET_API_KEY = "YOUR_BITGET_API_KEY"
 BITGET_SECRET = "YOUR_BITGET_SECRET"
