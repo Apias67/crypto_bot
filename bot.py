@@ -1,139 +1,170 @@
+import os
 import json
 import time
 import threading
-import requests
-import os
+import numpy as np
+import pandas as pd
 from websocket import WebSocketApp
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from telegram import Bot
+import requests
 
-# ---------------- Telegram ----------------
-TOKEN = os.getenv("8763631522:AAGbFUF-q8Bw1hDhP8B8NdjZ78Bnup57eVY")
-CHAT_ID = os.getenv("6702443414")
+# =========================
+# CONFIG
+# =========================
+TELEGRAM_TOKEN = os.environ.get("8763631522:AAGbFUF-q8Bw1hDhP8B8NdjZ78Bnup57eVY")  # TODO: Twój token bota
+TELEGRAM_CHAT_ID = os.environ.get("6702443414")  # TODO: Twój chat ID
+bot = Bot(token=TELEGRAM_TOKEN)
 
-def send_telegram(message):
-    try:
-        requests.get(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            params={"chat_id": CHAT_ID, "text": message}
-        )
-        print("✅ Telegram sent")
-    except Exception as e:
-        print("❌ Telegram error:", e)
+# Bitget Futures API - TODO: Uzupełnij swoimi danymi
+BITGET_API_KEY = "YOUR_BITGET_API_KEY"
+BITGET_SECRET = "YOUR_BITGET_SECRET"
+BITGET_PASSPHRASE = "YOUR_BITGET_PASSPHRASE"
 
-# ---------------- Dummy server ----------------
-class DummyHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
+# Trading modes
+MODES = {
+    "aggressive": {"TP_pct": 0.10, "SL_pct": 0.03, "trailing": 0.02},
+    "defensive": {"TP_pct": 0.05, "SL_pct": 0.02, "trailing": 0.01}
+}
 
-def run_server():
-    HTTPServer(('', 10000), DummyHandler).serve_forever()
+# Coins
+LARGE_CAPS = ["BTC","ETH","SOL","BNB","ADA"]
+RISK_ALTS = ["DOGE","XRP","SUI","PEPE","LINK","ZEC","AAVE","AVAX"]
 
-threading.Thread(target=run_server, daemon=True).start()
+# Tracking
+volume_history = {}
+price_history = {}
+open_positions = {}  # spot + futures
 
-# ---------------- KONFIG ----------------
-SYMBOLS = [
-    "btcusdt","ethusdt","xrpusdt","solusdt","bnbusdt",
-    "dogeusdt","adausdt","linkusdt","maticusdt","dotusdt",
-    "avaxusdt","shibusdt","ltcusdt","uniusdt","atomusdt"
-]
+# =========================
+# UTILITY FUNCTIONS
+# =========================
+def send_alert(msg):
+    bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
 
-STREAMS = "/".join([f"{s}@trade" for s in SYMBOLS])
-WS_URL = f"wss://data-stream.binance.vision/stream?streams={STREAMS}"
+def fetch_top_risky():
+    top = []
+    for coin in RISK_ALTS:
+        hist = volume_history.get(coin.lower()+"usdt", [])
+        if len(hist) >= 5:
+            if hist[-1] > 1.5*np.mean(hist[-5:]):
+                top.append(coin)
+    return top[:10]
 
-VOLUME_WINDOW = 10
-PUMP_THRESHOLD = 2
-WHALE_THRESHOLD = 500_000
-ALERT_INTERVAL = 300
+def calculate_tp_sl(entry_price, mode):
+    cfg = MODES[mode]
+    TP = entry_price*(1+cfg["TP_pct"])
+    SL = entry_price*(1-cfg["SL_pct"])
+    return TP, SL
 
-GROUPS = [20,30,40,50,80,100]
+def update_trailing(symbol, current_price):
+    if symbol not in open_positions:
+        return
+    pos = open_positions[symbol]
+    cfg = MODES[pos["mode"]]
+    # trailing SL
+    if current_price > pos["entry"]:
+        pos["SL"] = max(pos["SL"], current_price*(1-cfg["trailing"]))
+    # dynamic TP
+    if current_price / pos["entry"] > 1 + cfg["TP_pct"]:
+        pos["TP"] = current_price*(1+cfg["trailing"])
 
-volume_history = {s: [] for s in SYMBOLS}
-price_history = {s: [] for s in SYMBOLS}
-pump_alerts = {}
-whale_alerts = {}
+def check_trade_exit(symbol, current_price):
+    if symbol not in open_positions:
+        return
+    pos = open_positions[symbol]
+    if current_price >= pos["TP"]:
+        send_alert(f"[DEMO EXIT] {symbol} Entry: {pos['entry']:.2f} Exit: {current_price:.2f} Gain ✅ Mode: {pos['mode'].upper()} Side: {pos.get('side','SPOT')}")
+        del open_positions[symbol]
+    elif current_price <= pos["SL"]:
+        send_alert(f"[DEMO EXIT] {symbol} Entry: {pos['entry']:.2f} Exit: {current_price:.2f} Loss ❌ Mode: {pos['mode'].upper()} Side: {pos.get('side','SPOT')}")
+        del open_positions[symbol]
 
-# ---------------- DETEKCJA ----------------
-def detect(symbol, volume, price):
-    volume_history[symbol].append(volume)
-    price_history[symbol].append(price)
+# =========================
+# SPOT TRADING (demo)
+# =========================
+def enter_demo_spot(symbol, price, mode):
+    TP, SL = calculate_tp_sl(price, mode)
+    open_positions[symbol] = {"entry": price, "TP": TP, "SL": SL, "mode": mode, "side":"SPOT"}
+    send_alert(f"[DEMO BUY] {symbol} Entry: {price:.2f} TP: {TP:.2f} SL: {SL:.2f} Mode: {mode.upper()}")
 
-    if len(volume_history[symbol]) > VOLUME_WINDOW:
-        volume_history[symbol].pop(0)
-        price_history[symbol].pop(0)
+# =========================
+# FUTURES TRADING (demo / Bitget)
+# =========================
+def enter_demo_futures(symbol, price, side, mode):
+    TP, SL = calculate_tp_sl(price, mode)
+    open_positions[symbol] = {"entry": price, "TP": TP, "SL": SL, "mode": mode, "side": side}
+    send_alert(f"[DEMO FUTURES] {symbol} {side.upper()} Entry: {price:.2f} TP: {TP:.2f} SL: {SL:.2f} Mode: {mode.upper()}")
 
-    avg_vol = sum(volume_history[symbol]) / len(volume_history[symbol])
+# TODO: Bitget real API functions
+# def bitget_place_order(symbol, side, price, quantity):
+#     endpoint = "https://api.bitget.com/api/mix/v1/order/placeOrder"
+#     # Autoryzacja i POST request
+#     pass
 
-    # PUMP
-    if avg_vol > 0 and volume > avg_vol * PUMP_THRESHOLD:
-        old_price = price_history[symbol][0]
-        pct = ((price - old_price) / old_price) * 100
+# =========================
+# MOMENTUM INDICATORS
+# =========================
+def calc_rsi(symbol, prices, period=14):
+    if len(prices) < period:
+        return 50
+    delta = np.diff(prices[-period:])
+    up = delta[delta>0].sum()
+    down = -delta[delta<0].sum()
+    rsi = 100*up/(up+down) if (up+down)!=0 else 50
+    return rsi
 
-        for g in GROUPS:
-            if pct >= g:
-                pump_alerts.setdefault(g, []).append(f"{symbol.upper()} +{pct:.1f}%")
-                break
-
-    # WHALE
-    if volume * price >= WHALE_THRESHOLD:
-        whale_alerts[symbol] = max(whale_alerts.get(symbol, 0), volume*price)
-
-# ---------------- WEBSOCKET ----------------
+# =========================
+# WEBSOCKET HANDLER
+# =========================
 def on_message(ws, message):
     data = json.loads(message)
-    d = data['data']
+    symbol = data['s']
+    price = float(data['p'])
+    vol = float(data['q'])
 
-    symbol = d['s'].lower()
-    volume = float(d['q'])
-    price = float(d['p'])
+    # histories
+    volume_history.setdefault(symbol, []).append(vol)
+    price_history.setdefault(symbol, []).append(price)
+    if len(volume_history[symbol]) > 20: volume_history[symbol].pop(0)
+    if len(price_history[symbol]) > 50: price_history[symbol].pop(0)
 
-    detect(symbol, volume, price)
+    avg_vol = np.mean(volume_history[symbol])
+    rsi = calc_rsi(symbol, price_history[symbol])
 
-def on_open(ws):
-    print("✅ WebSocket connected")
+    # Determine mode
+    mode = "aggressive" if symbol in [a.lower()+"usdt" for a in RISK_ALTS] else "defensive"
+
+    # Pre-pump + RSI filter
+    if vol > 3*avg_vol and rsi > 55:
+        enter_demo_spot(symbol, price, mode)
+        # Example: also futures demo for BTC/ETH/SOL
+        if symbol in ["btcusdt","ethusdt","solusdt"]:
+            enter_demo_futures(symbol, price, "long", mode)  # TODO: can choose "short" if trend down
+
+    update_trailing(symbol, price)
+    check_trade_exit(symbol, price)
 
 def on_error(ws, error):
     print("❌ WS error:", error)
 
-def on_close(ws, close_status_code, close_msg):
-    print("❌ WS closed", close_status_code, close_msg)
+def on_close(ws, code, msg):
+    print("❌ WS closed", code, msg)
 
-# ---------------- ALERTY ----------------
-def alert_loop():
-    send_telegram("🚀 BOT FINAL działa")
+def on_open(ws):
+    print("🔥 BOT STARTUJE 🔥")
 
-    while True:
-        time.sleep(ALERT_INTERVAL)
+# =========================
+# START WS THREADS
+# =========================
+def start_ws(symbol):
+    ws_url = f"wss://stream.binance.com:9443/ws/{symbol}@trade"  # TODO: Binance spot
+    ws = WebSocketApp(ws_url, on_message=on_message, on_error=on_error, on_close=on_close)
+    ws.on_open = on_open
+    ws.run_forever()
 
-        msg = []
+# Binance spot symbols
+SYMBOLS = ["btcusdt","ethusdt","solusdt"] + [f"{a.lower()}usdt" for a in fetch_top_risky()]
 
-        if pump_alerts:
-            msg.append("🔥 PUMPY (5 min):")
-            for g in sorted(pump_alerts):
-                msg.append(f"{g}%+ → {', '.join(pump_alerts[g][:5])}")
-
-        if whale_alerts:
-            msg.append("\n🐋 WHALE:")
-            top = sorted(whale_alerts.items(), key=lambda x: x[1], reverse=True)[:5]
-            for s,v in top:
-                msg.append(f"{s.upper()} ${v:,.0f}")
-
-        if msg:
-            send_telegram("\n".join(msg))
-
-        pump_alerts.clear()
-        whale_alerts.clear()
-
-# ---------------- START ----------------
-threading.Thread(target=alert_loop, daemon=True).start()
-
-ws = WebSocketApp(
-    WS_URL,
-    on_message=on_message,
-    on_open=on_open,
-    on_error=on_error,
-    on_close=on_close
-)
-
-ws.run_forever()
+for sym in SYMBOLS:
+    t = threading.Thread(target=start_ws, args=(sym,))
+    t.start()
