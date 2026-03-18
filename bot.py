@@ -145,6 +145,20 @@ def run_ws(symbols, buffer_dict):
 # ===========================
 print("🔥 Bot LEVEL 5.11 USDC started!")
 
+import threading
+import requests
+
+def self_ping():
+    while True:
+        try:
+            requests.get("https://twoj-bot-url.onrender.com")
+            print("Self-ping OK")
+        except:
+            pass
+        time.sleep(5*60)  # co 5 minut
+
+threading.Thread(target=self_ping, daemon=True).start()
+
 # Aktualizacja coinów w tle
 threading.Thread(target=update_coins, daemon=True).start()
 
