@@ -38,25 +38,39 @@ def send_alert(msg):
         print("❌ Telegram error:", e)
 
 # ==========================
-# 2️⃣ Pobieranie TOP coinów i ryzykownych altów
+# 2️⃣ Pobieranie TOP USDC i ryzykownych altów
 # ==========================
 def get_top_coins(top_n=10):
     url = "https://api.binance.com/api/v3/ticker/24hr"
-    df = pd.DataFrame(requests.get(url).json())
-    df['quoteVolume'] = df['quoteVolume'].astype(float)
-    df_usdc = df[df['symbol'].str.endswith('USDC')]
-    top = df_usdc.sort_values('quoteVolume', ascending=False).head(top_n)
-    return list(top['symbol'])
+    try:
+        data = requests.get(url, timeout=5).json()
+        if not data: return []
+        df = pd.DataFrame(data)
+        if df.empty: return []
+        df['quoteVolume'] = pd.to_numeric(df['quoteVolume'], errors='coerce').fillna(0)
+        df_usdc = df[df['symbol'].str.endswith('USDC')]
+        top = df_usdc.sort_values('quoteVolume', ascending=False).head(top_n)
+        return list(top['symbol'])
+    except Exception as e:
+        print("❌ get_top_coins error:", e)
+        return []
 
 def get_risk_alts(top_n=15):
     url = "https://api.binance.com/api/v3/ticker/24hr"
-    df = pd.DataFrame(requests.get(url).json())
-    df['quoteVolume'] = df['quoteVolume'].astype(float)
-    df['priceChangePercent'] = df['priceChangePercent'].astype(float)
-    df_usdc = df[df['symbol'].str.endswith('USDC')]
-    df_usdc['risk_score'] = df_usdc['priceChangePercent'].abs() / (df_usdc['quoteVolume']+1)
-    risk = df_usdc.sort_values('risk_score', ascending=False).head(top_n)
-    return list(risk['symbol'])
+    try:
+        data = requests.get(url, timeout=5).json()
+        if not data: return []
+        df = pd.DataFrame(data)
+        if df.empty: return []
+        df['quoteVolume'] = pd.to_numeric(df['quoteVolume'], errors='coerce').fillna(0)
+        df['priceChangePercent'] = pd.to_numeric(df['priceChangePercent'], errors='coerce').fillna(0)
+        df_usdc = df[df['symbol'].str.endswith('USDC')]
+        df_usdc['risk_score'] = df_usdc['priceChangePercent'].abs() / (df_usdc['quoteVolume']+1)
+        risk = df_usdc.sort_values('risk_score', ascending=False).head(top_n)
+        return list(risk['symbol'])
+    except Exception as e:
+        print("❌ get_risk_alts error:", e)
+        return []
 
 # ==========================
 # 3️⃣ Bufory wolumenów i parametry
@@ -66,8 +80,8 @@ WINDOW_RISK = 20
 PUMP_THRESHOLD = 2.5
 WHALE_THRESHOLD = 1_000_000
 
-INTERVAL_TOP = 4*60*60
-INTERVAL_RISK = 60*60
+INTERVAL_TOP = 4*60*60   # 4H
+INTERVAL_RISK = 60*60    # 1H
 
 volume_top = {}
 volume_risk = {}
@@ -133,7 +147,7 @@ def update_coins():
     risk_alts = get_risk_alts()
     send_alert(f"🔄 Updated lists\nTOP: {top_coins}\nRisky: {risk_alts}")
 
-send_alert("🔥 Bot LEVEL 5.10 USDC started!")
+send_alert("🔥 Bot LEVEL 5.11 USDC started!")
 update_coins()
 
 for c in top_coins:
