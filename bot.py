@@ -55,9 +55,9 @@ SYMBOLS = [
 ]
 
 VOLUME_WINDOW = 10
-PUMP_THRESHOLD = 3
-WHALE_THRESHOLD = 5_000_000
-ALERT_INTERVAL = 300  # 5 minut
+PUMP_THRESHOLD = 1.5
+WHALE_THRESHOLD = 100_000
+ALERT_INTERVAL = 60  # 1 minut
 
 # ---------------- Bufory danych ----------------
 volume_history = {symbol: [] for symbol in SYMBOLS}
@@ -95,8 +95,8 @@ def make_on_message(symbol):
         trade_volume = float(data['q'])
         trade_price = float(data['p'])
         detect_pump_or_whale(symbol, trade_volume, trade_price, trade_volume)
+        print(f"{symbol.upper()} trade: price={trade_price}, volume={trade_volume}")
     return on_message
-
 def on_error(ws, error):
     print("WebSocket error:", error)
 
