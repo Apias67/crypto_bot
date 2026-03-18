@@ -10,7 +10,7 @@ def send_telegram(msg):
     print("STATUS:", r.status_code)
     print("ODPOWIEDŹ:", r.text)
 
-print("START BOTA")
+print("🔥 BOT STARTUJE 🔥")
 
 send_telegram("🔥 TEST 1")
 
