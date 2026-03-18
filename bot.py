@@ -1,6 +1,4 @@
 
-TELEGRAM_TOKEN = "8763631522:AAGbFUF-q8Bw1hDhP8B8NdjZ78Bnup57eVY"
-TELEGRAM_CHAT_ID = 6702443414
 import os
 import time
 import threading
@@ -12,56 +10,50 @@ from telegram import Bot
 import requests
 
 # ==========================
-# TU WPROWADŹ SWOJE DANE
+# WPROWADŹ SWOJE DANE
 # ==========================
 TELEGRAM_TOKEN = "8763631522:AAGbFUF-q8Bw1hDhP8B8NdjZ78Bnup57eVY"  # Twój token w cudzysłowie
-TELEGRAM_CHAT_ID = 6702443414  # Twój chat ID jako liczba
+TELEGRAM_CHAT_ID = 6702443414         # Twój chat ID jako liczba
 
-# ==========================
-# Bitget API – opcjonalnie dla futures
-# ==========================
 BITGET_API_KEY = "TU_WPROWADŹ_API_KEY_BITGET"
 BITGET_API_SECRET = "TU_WPROWADŹ_API_SECRET_BITGET"
 BITGET_API_PASSPHRASE = "TU_WPROWADŹ_PASSPHRASE_BITGET"
-USE_FUTURES = False  # True jeśli masz konto futures na Bitget
+USE_FUTURES = False  # True jeśli masz konto futures Bitget
 
-# ==========================
-# Tworzymy bota Telegram
+STRATEGY_MODE = "aggressive"  # "aggressive" lub "defensive"
+
 # ==========================
 bot = Bot(token=TELEGRAM_TOKEN)
-
-def send_alert(message):
+def send_alert(msg):
     try:
-        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
-        print(message)
+        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
+        print(msg)
     except Exception as e:
-        print("❌ Błąd wysyłki:", e)
+        print("❌ Telegram error:", e)
 
 # ==========================
-# Funkcje do pobierania TOP i ryzykownych altów (USDC)
+# Pobieranie coinów
 # ==========================
 def get_top_coins(top_n=10):
     url = "https://api.binance.com/api/v3/ticker/24hr"
-    data = requests.get(url).json()
-    df = pd.DataFrame(data)
+    df = pd.DataFrame(requests.get(url).json())
     df['quoteVolume'] = df['quoteVolume'].astype(float)
     df_usdc = df[df['symbol'].str.endswith('USDC')]
-    top_coins = df_usdc.sort_values(by='quoteVolume', ascending=False).head(top_n)
-    return list(top_coins['symbol'])
+    top = df_usdc.sort_values('quoteVolume', ascending=False).head(top_n)
+    return list(top['symbol'])
 
 def get_risk_alts(top_n=15):
     url = "https://api.binance.com/api/v3/ticker/24hr"
-    data = requests.get(url).json()
-    df = pd.DataFrame(data)
+    df = pd.DataFrame(requests.get(url).json())
     df['quoteVolume'] = df['quoteVolume'].astype(float)
     df['priceChangePercent'] = df['priceChangePercent'].astype(float)
     df_usdc = df[df['symbol'].str.endswith('USDC')]
-    df_usdc['risk_score'] = df_usdc['priceChangePercent'].abs() / (df_usdc['quoteVolume'] + 1)
-    risk_alts = df_usdc.sort_values(by='risk_score', ascending=False).head(top_n)
-    return list(risk_alts['symbol'])
+    df_usdc['risk_score'] = df_usdc['priceChangePercent'].abs() / (df_usdc['quoteVolume']+1)
+    risk = df_usdc.sort_values('risk_score', ascending=False).head(top_n)
+    return list(risk['symbol'])
 
 # ==========================
-# Bufory wolumenów i interwały
+# Bufory wolumenów
 # ==========================
 WINDOW_TOP = 10
 WINDOW_RISK = 20
@@ -75,98 +67,87 @@ volume_top = {}
 volume_risk = {}
 
 # ==========================
-# Wykrywanie pumptów, whale buys i TP/SL
+# TP/SL dynamiczne
 # ==========================
-def detect_pump_or_whale(symbol, volume, price, amount, is_risk=False):
+def calculate_tp_sl(price):
+    if STRATEGY_MODE == "aggressive":
+        tp = price * 1.08
+        sl = price * 0.95
+    else:
+        tp = price * 1.03
+        sl = price * 0.97
+    return tp, sl
+
+# ==========================
+def detect_pump_whale(symbol, volume, price, amount, is_risk=False):
     buffer = volume_risk if is_risk else volume_top
     window = WINDOW_RISK if is_risk else WINDOW_TOP
     if symbol not in buffer:
         buffer[symbol] = []
 
-    avg_volume = np.mean(buffer[symbol]) if buffer[symbol] else 0
+    avg_vol = np.mean(buffer[symbol]) if buffer[symbol] else 0
 
-    # Pump alert
-    if avg_volume > 0 and volume > PUMP_THRESHOLD * avg_volume:
-        send_alert(f"🚨 Pump detected! {symbol} Volume: {volume:.2f} (avg: {avg_volume:.2f})")
+    if avg_vol > 0 and volume > PUMP_THRESHOLD*avg_vol:
+        send_alert(f"🚨 Pump detected: {symbol} Vol: {volume:.2f} Avg: {avg_vol:.2f}")
 
-    # Whale buy alert
     if amount*price >= WHALE_THRESHOLD:
-        send_alert(f"🐋 Whale buy! {symbol} Amount: {amount:.4f} Price: {price}")
+        send_alert(f"🐋 Whale buy: {symbol} Amount: {amount:.4f} Price: {price}")
 
-    # Demo TP/SL logic
-    tp = price * 1.05  # +5% target
-    sl = price * 0.97  # -3% stop loss
-    send_alert(f"📈 Demo entry {symbol} Price: {price:.2f} TP: {tp:.2f} SL: {sl:.2f}")
+    tp, sl = calculate_tp_sl(price)
+    send_alert(f"📊 Demo {symbol} Entry: {price:.2f} TP: {tp:.2f} SL: {sl:.2f}")
 
-    # Bufor wolumenów
     buffer[symbol].append(volume)
     if len(buffer[symbol]) > window:
         buffer[symbol].pop(0)
 
 # ==========================
-# WebSocket do Binance
+# WebSocket
 # ==========================
 def create_ws(symbol, is_risk=False):
     ws_url = f"wss://stream.binance.com:9443/ws/{symbol.lower()}@trade"
-
-    def on_message(ws, message):
+    def on_msg(ws, message):
         data = json.loads(message)
-        trade_volume = float(data['q'])
-        trade_price = float(data['p'])
-        detect_pump_or_whale(symbol, trade_volume, trade_price, trade_volume, is_risk)
-
-    def on_error(ws, error):
-        print(f"❌ WS error for {symbol}: {error}")
-
-    def on_close(ws, close_status_code, close_msg):
-        print(f"WS closed for {symbol}")
-
-    def on_open(ws):
-        print(f"WS opened for {symbol}")
-
-    ws = WebSocketApp(ws_url, on_message=on_message, on_error=on_error, on_close=on_close)
-    ws.on_open = on_open
+        detect_pump_whale(symbol, float(data['q']), float(data['p']), float(data['q']), is_risk)
+    ws = WebSocketApp(ws_url, on_message=on_msg,
+                      on_error=lambda ws,e: print(f"❌ {symbol} WS error: {e}"),
+                      on_close=lambda ws, code, msg: print(f"WS closed {symbol}"))
+    ws.on_open = lambda ws: print(f"WS open {symbol}")
     threading.Thread(target=ws.run_forever, daemon=True).start()
 
 # ==========================
-# Aktualizacja list coinów
+# Aktualizacja coinów
 # ==========================
-def update_coin_lists():
+def update_coins():
     global top_coins, risk_alts
     top_coins = get_top_coins()
     risk_alts = get_risk_alts()
-    send_alert(f"🔄 Aktualizacja list:\nTOP: {top_coins}\nRyzykowne: {risk_alts}")
+    send_alert(f"🔄 Updated lists\nTOP: {top_coins}\nRisky: {risk_alts}")
+
+send_alert("🔥 Bot LEVEL 5.10 USDC started!")
+update_coins()
+
+for c in top_coins:
+    create_ws(c, False)
+for c in risk_alts:
+    create_ws(c, True)
 
 # ==========================
-# Start bota
-# ==========================
-send_alert("🔥 Bot LEVEL 5.9 USDC wystartował! 🔥")
-update_coin_lists()
-
-# Uruchamiamy WebSockety
-for coin in top_coins:
-    create_ws(coin, is_risk=False)
-for coin in risk_alts:
-    create_ws(coin, is_risk=True)
-
-# ==========================
-# Pętle odświeżania list
+# Odświeżanie list
 # ==========================
 def loop_top():
     while True:
         time.sleep(INTERVAL_TOP)
-        update_coin_lists()
-
+        update_coins()
 def loop_risk():
     while True:
         time.sleep(INTERVAL_RISK)
-        update_coin_lists()
+        update_coins()
 
 threading.Thread(target=loop_top, daemon=True).start()
 threading.Thread(target=loop_risk, daemon=True).start()
 
 # ==========================
-# Pętla główna utrzymująca bota online
+# Pętla główna
 # ==========================
 while True:
     time.sleep(60)
