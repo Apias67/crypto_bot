@@ -1,3 +1,5 @@
-requests
 websocket-client
+numpy
 pandas
+python-telegram-bot
+requests
