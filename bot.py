@@ -1,4 +1,3 @@
-
 import os
 import time
 import threading
@@ -10,20 +9,27 @@ from telegram import Bot
 import requests
 
 # ==========================
-# WPROWADŹ SWOJE DANE
+# 1️⃣ Dane z ENV
 # ==========================
-TELEGRAM_TOKEN = "8763631522:AAGbFUF-q8Bw1hDhP8B8NdjZ78Bnup57eVY"  # Twój token w cudzysłowie
-TELEGRAM_CHAT_ID = 6702443414         # Twój chat ID jako liczba
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-BITGET_API_KEY = "TU_WPROWADŹ_API_KEY_BITGET"
-BITGET_API_SECRET = "TU_WPROWADŹ_API_SECRET_BITGET"
-BITGET_API_PASSPHRASE = "TU_WPROWADŹ_PASSPHRASE_BITGET"
-USE_FUTURES = False  # True jeśli masz konto futures Bitget
+if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+    raise ValueError("❌ Brak TELEGRAM_BOT_TOKEN lub TELEGRAM_CHAT_ID w Environment Variables!")
 
-STRATEGY_MODE = "aggressive"  # "aggressive" lub "defensive"
-
-# ==========================
+TELEGRAM_CHAT_ID = int(TELEGRAM_CHAT_ID)
 bot = Bot(token=TELEGRAM_TOKEN)
+
+# Bitget – futures (opcjonalnie)
+BITGET_API_KEY = os.environ.get("BITGET_API_KEY", "")
+BITGET_API_SECRET = os.environ.get("BITGET_API_SECRET", "")
+BITGET_API_PASSPHRASE = os.environ.get("BITGET_API_PASSPHRASE", "")
+USE_FUTURES = False  # True jeśli masz konto Bitget
+
+# Strategia: "aggressive" lub "defensive"
+STRATEGY_MODE = "aggressive"
+
+# ==========================
 def send_alert(msg):
     try:
         bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
@@ -32,7 +38,7 @@ def send_alert(msg):
         print("❌ Telegram error:", e)
 
 # ==========================
-# Pobieranie coinów
+# 2️⃣ Pobieranie TOP coinów i ryzykownych altów
 # ==========================
 def get_top_coins(top_n=10):
     url = "https://api.binance.com/api/v3/ticker/24hr"
@@ -53,7 +59,7 @@ def get_risk_alts(top_n=15):
     return list(risk['symbol'])
 
 # ==========================
-# Bufory wolumenów
+# 3️⃣ Bufory wolumenów i parametry
 # ==========================
 WINDOW_TOP = 10
 WINDOW_RISK = 20
@@ -67,7 +73,7 @@ volume_top = {}
 volume_risk = {}
 
 # ==========================
-# TP/SL dynamiczne
+# 4️⃣ TP/SL demo
 # ==========================
 def calculate_tp_sl(price):
     if STRATEGY_MODE == "aggressive":
@@ -87,21 +93,25 @@ def detect_pump_whale(symbol, volume, price, amount, is_risk=False):
 
     avg_vol = np.mean(buffer[symbol]) if buffer[symbol] else 0
 
+    # Pump
     if avg_vol > 0 and volume > PUMP_THRESHOLD*avg_vol:
         send_alert(f"🚨 Pump detected: {symbol} Vol: {volume:.2f} Avg: {avg_vol:.2f}")
 
+    # Whale buy
     if amount*price >= WHALE_THRESHOLD:
         send_alert(f"🐋 Whale buy: {symbol} Amount: {amount:.4f} Price: {price}")
 
+    # Demo TP/SL
     tp, sl = calculate_tp_sl(price)
     send_alert(f"📊 Demo {symbol} Entry: {price:.2f} TP: {tp:.2f} SL: {sl:.2f}")
 
+    # Bufor wolumenu
     buffer[symbol].append(volume)
     if len(buffer[symbol]) > window:
         buffer[symbol].pop(0)
 
 # ==========================
-# WebSocket
+# 5️⃣ WebSocket
 # ==========================
 def create_ws(symbol, is_risk=False):
     ws_url = f"wss://stream.binance.com:9443/ws/{symbol.lower()}@trade"
@@ -115,7 +125,7 @@ def create_ws(symbol, is_risk=False):
     threading.Thread(target=ws.run_forever, daemon=True).start()
 
 # ==========================
-# Aktualizacja coinów
+# 6️⃣ Aktualizacja coinów
 # ==========================
 def update_coins():
     global top_coins, risk_alts
@@ -132,7 +142,7 @@ for c in risk_alts:
     create_ws(c, True)
 
 # ==========================
-# Odświeżanie list
+# 7️⃣ Odświeżanie list
 # ==========================
 def loop_top():
     while True:
@@ -147,7 +157,7 @@ threading.Thread(target=loop_top, daemon=True).start()
 threading.Thread(target=loop_risk, daemon=True).start()
 
 # ==========================
-# Pętla główna
+# 8️⃣ Główna pętla
 # ==========================
 while True:
     time.sleep(60)
