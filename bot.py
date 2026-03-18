@@ -11,8 +11,8 @@ import requests
 # =========================
 # CONFIG
 # =========================
-TELEGRAM_TOKEN = os.environ.get("8763631522:AAGbFUF-q8Bw1hDhP8B8NdjZ78Bnup57eVY")  # TODO: Twój token bota
-TELEGRAM_CHAT_ID = os.environ.get("6702443414")  # TODO: Twój chat ID
+TELEGRAM_TOKEN = os.environ.get(8763631522:AAGbFUF-q8Bw1hDhP8B8NdjZ78Bnup57eVY)  # TODO: Twój token bota
+TELEGRAM_CHAT_ID = os.environ.get(6702443414)  # TODO: Twój chat ID
 bot = Bot(token=TELEGRAM_TOKEN)
 
 # Bitget Futures API - TODO: Uzupełnij swoimi danymi
