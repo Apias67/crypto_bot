@@ -40,7 +40,7 @@ SYMBOLS = [
 ]
 
 STREAMS = "/".join([f"{s}@trade" for s in SYMBOLS])
-WS_URL = f"wss://stream.binance.com:9443/stream?streams={STREAMS}"
+WS_URL = f"wss://data-stream.binance.vision/stream?streams={STREAMS}"
 
 VOLUME_WINDOW = 10
 PUMP_THRESHOLD = 2
@@ -96,8 +96,8 @@ def on_open(ws):
 def on_error(ws, error):
     print("❌ WS error:", error)
 
-def on_close(ws):
-    print("❌ WS closed")
+def on_close(ws, close_status_code, close_msg):
+    print("❌ WS closed", close_status_code, close_msg)
 
 # ---------------- ALERTY ----------------
 def alert_loop():
